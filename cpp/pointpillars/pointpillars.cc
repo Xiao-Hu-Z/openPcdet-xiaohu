@@ -36,13 +36,10 @@
  */
 
 /**
-* @author Yan haixu
-* Contact: just github.com/hova88
-* @date 2021/04/30
-*/
-
-
-
+ * @author Yan haixu
+ * Contact: just github.com/hova88
+ * @date 2021/04/30
+ */
 
 #include "pointpillars.h"
 
@@ -73,8 +70,8 @@ PointPillars::PointPillars(const float score_threshold,
         kMaxNumPointsPerPillar,
         kNumPointFeature,
         kNumIndsForScan,
-        kGridXSize,kGridYSize, kGridZSize,
-        kPillarXSize,kPillarYSize, kPillarZSize,
+        kGridXSize, kGridYSize, kGridZSize,
+        kPillarXSize, kPillarYSize, kPillarZSize,
         kMinXRange, kMinYRange, kMinZRange));
 
     scatter_cuda_ptr_.reset(new ScatterCuda(kNumThreads, kGridXSize, kGridYSize));
@@ -82,34 +79,34 @@ PointPillars::PointPillars(const float score_threshold,
     const float float_min = std::numeric_limits<float>::lowest();
     const float float_max = std::numeric_limits<float>::max();
     postprocess_cuda_ptr_.reset(
-      new PostprocessCuda(kNumThreads,
-                          float_min, float_max, 
-                          kNumClass,kNumAnchorPerCls,
-                          kMultiheadLabelMapping,
-                          score_threshold_, 
-                          nms_overlap_threshold_,
-                          kNmsPreMaxsize, 
-                          kNmsPostMaxsize,
-                          kNumBoxCorners, 
-                          kNumInputBoxFeature,
-                          7));  /*kNumOutputBoxFeature*/
-    
+        new PostprocessCuda(kNumThreads,
+                            float_min, float_max,
+                            kNumClass, kNumAnchorPerCls,
+                            kMultiheadLabelMapping,
+                            score_threshold_,
+                            nms_overlap_threshold_,
+                            kNmsPreMaxsize,
+                            kNmsPostMaxsize,
+                            kNumBoxCorners,
+                            kNumInputBoxFeature,
+                            7)); /*kNumOutputBoxFeature*/
 }
 
-PointPillars::~PointPillars() {
-    // for pillars 
+PointPillars::~PointPillars()
+{
+    // for pillars
     GPU_CHECK(cudaFree(dev_num_points_per_pillar_));
     GPU_CHECK(cudaFree(dev_x_coors_));
     GPU_CHECK(cudaFree(dev_y_coors_));
     GPU_CHECK(cudaFree(dev_pillar_point_feature_));
     GPU_CHECK(cudaFree(dev_pillar_coors_));
     // for sparse map
-    GPU_CHECK(cudaFree(dev_sparse_pillar_map_));    
+    GPU_CHECK(cudaFree(dev_sparse_pillar_map_));
     GPU_CHECK(cudaFree(dev_cumsum_along_x_));
     GPU_CHECK(cudaFree(dev_cumsum_along_y_));
     // for pfe forward
     GPU_CHECK(cudaFree(dev_pfe_gather_feature_));
-      
+
     GPU_CHECK(cudaFree(pfe_buffers_[0]));
     GPU_CHECK(cudaFree(pfe_buffers_[1]));
 
@@ -133,8 +130,6 @@ PointPillars::~PointPillars() {
     GPU_CHECK(cudaFree(dev_filtered_dir_));
     GPU_CHECK(cudaFree(dev_box_for_nms_));
     GPU_CHECK(cudaFree(dev_filter_count_));
-
-
 }
 
 void PointPillars::InitParams()
@@ -162,8 +157,8 @@ void PointPillars::InitParams()
     kAnchorStrides = 4;
     kNmsPreMaxsize = params["MODEL"]["POST_PROCESSING"]["NMS_CONFIG"]["NMS_PRE_MAXSIZE"].as<int>();
     kNmsPostMaxsize = params["MODEL"]["POST_PROCESSING"]["NMS_CONFIG"]["NMS_POST_MAXSIZE"].as<int>();
-    //params for initialize anchors
-    //Adapt to OpenPCDet
+    // params for initialize anchors
+    // Adapt to OpenPCDet
     kAnchorNames = params["CLASS_NAMES"].as<std::vector<std::string>>();
     for (int i = 0; i < kAnchorNames.size(); ++i)
     {
@@ -184,89 +179,90 @@ void PointPillars::InitParams()
     }
 
     // Generate secondary parameters based on above.
-    kGridXSize = static_cast<int>((kMaxXRange - kMinXRange) / kPillarXSize); //512
-    kGridYSize = static_cast<int>((kMaxYRange - kMinYRange) / kPillarYSize); //512
-    kGridZSize = static_cast<int>((kMaxZRange - kMinZRange) / kPillarZSize); //1
-    std::cout<<"RPN input size: 64 * "<<kGridXSize<<" * "<<kGridYSize <<std::endl;
+    kGridXSize = static_cast<int>((kMaxXRange - kMinXRange) / kPillarXSize); // 512
+    kGridYSize = static_cast<int>((kMaxYRange - kMinYRange) / kPillarYSize); // 512
+    kGridZSize = static_cast<int>((kMaxZRange - kMinZRange) / kPillarZSize); // 1
+    std::cout << "RPN input size: 64 * " << kGridXSize << " * " << kGridYSize << std::endl;
     kRpnInputSize = 64 * kGridYSize * kGridXSize;
 
-    kNumAnchorXinds = static_cast<int>(kGridXSize / kAnchorStrides); //Width
-    kNumAnchorYinds = static_cast<int>(kGridYSize / kAnchorStrides); //Hight
+    kNumAnchorXinds = static_cast<int>(kGridXSize / kAnchorStrides); // Width
+    kNumAnchorYinds = static_cast<int>(kGridYSize / kAnchorStrides); // Hight
     kNumAnchor = kNumAnchorXinds * kNumAnchorYinds * 2 * kNumClass;  // H * W * Ro * N = 196608
 
-    kNumAnchorPerCls = kNumAnchorXinds * kNumAnchorYinds * 2; //H * W * Ro = 32768
+    kNumAnchorPerCls = kNumAnchorXinds * kNumAnchorYinds * 2; // H * W * Ro = 32768
     kRpnBoxOutputSize = kNumAnchor * kNumOutputBoxFeature;
     kRpnClsOutputSize = kNumAnchor * kNumClass;
     kRpnDirOutputSize = kNumAnchor * 2;
 }
 
-void PointPillars::DeviceMemoryMalloc() {
-    // for pillars 
-    GPU_CHECK(cudaMalloc(reinterpret_cast<void**>(&dev_num_points_per_pillar_), kMaxNumPillars * sizeof(float))); // M
-    GPU_CHECK(cudaMalloc(reinterpret_cast<void**>(&dev_x_coors_), kMaxNumPillars * sizeof(int))); // M
-    GPU_CHECK(cudaMalloc(reinterpret_cast<void**>(&dev_y_coors_), kMaxNumPillars * sizeof(int))); // M
-    GPU_CHECK(cudaMalloc(reinterpret_cast<void**>(&dev_pillar_point_feature_), kMaxNumPillars * kMaxNumPointsPerPillar * kNumPointFeature * sizeof(float))); // [M , m , 4]
-    GPU_CHECK(cudaMalloc(reinterpret_cast<void**>(&dev_pillar_coors_),  kMaxNumPillars * 4 * sizeof(float))); // [M , 4]
+void PointPillars::DeviceMemoryMalloc()
+{
+    // for pillars
+    GPU_CHECK(cudaMalloc(reinterpret_cast<void **>(&dev_num_points_per_pillar_), kMaxNumPillars * sizeof(float)));                                            // M
+    GPU_CHECK(cudaMalloc(reinterpret_cast<void **>(&dev_x_coors_), kMaxNumPillars * sizeof(int)));                                                            // M
+    GPU_CHECK(cudaMalloc(reinterpret_cast<void **>(&dev_y_coors_), kMaxNumPillars * sizeof(int)));                                                            // M
+    GPU_CHECK(cudaMalloc(reinterpret_cast<void **>(&dev_pillar_point_feature_), kMaxNumPillars * kMaxNumPointsPerPillar * kNumPointFeature * sizeof(float))); // [M , m , 4]
+    GPU_CHECK(cudaMalloc(reinterpret_cast<void **>(&dev_pillar_coors_), kMaxNumPillars * 4 * sizeof(float)));                                                 // [M , 4]
     // for sparse map
-    GPU_CHECK(cudaMalloc(reinterpret_cast<void**>(&dev_sparse_pillar_map_), kNumIndsForScan * kNumIndsForScan * sizeof(int))); // [1024 , 1024]
-    GPU_CHECK(cudaMalloc(reinterpret_cast<void**>(&dev_cumsum_along_x_), kNumIndsForScan * kNumIndsForScan * sizeof(int))); // [1024 , 1024]
-    GPU_CHECK(cudaMalloc(reinterpret_cast<void**>(&dev_cumsum_along_y_), kNumIndsForScan * kNumIndsForScan * sizeof(int)));// [1024 , 1024]
+    GPU_CHECK(cudaMalloc(reinterpret_cast<void **>(&dev_sparse_pillar_map_), kNumIndsForScan * kNumIndsForScan * sizeof(int))); // [1024 , 1024]
+    GPU_CHECK(cudaMalloc(reinterpret_cast<void **>(&dev_cumsum_along_x_), kNumIndsForScan * kNumIndsForScan * sizeof(int)));    // [1024 , 1024]
+    GPU_CHECK(cudaMalloc(reinterpret_cast<void **>(&dev_cumsum_along_y_), kNumIndsForScan * kNumIndsForScan * sizeof(int)));    // [1024 , 1024]
 
-    GPU_CHECK(cudaMalloc(reinterpret_cast<void**>(&dev_pfe_gather_feature_),
-                        kMaxNumPillars * kMaxNumPointsPerPillar *
-                            kNumGatherPointFeature * sizeof(float)));
+    GPU_CHECK(cudaMalloc(reinterpret_cast<void **>(&dev_pfe_gather_feature_),
+                         kMaxNumPillars * kMaxNumPointsPerPillar *
+                             kNumGatherPointFeature * sizeof(float)));
     // for trt inference
     // create GPU buffers and a stream
 
     GPU_CHECK(
         cudaMalloc(&pfe_buffers_[0], kMaxNumPillars * kMaxNumPointsPerPillar *
-                                        kNumGatherPointFeature * sizeof(float)));
+                                         kNumGatherPointFeature * sizeof(float)));
     GPU_CHECK(cudaMalloc(&pfe_buffers_[1], kMaxNumPillars * 64 * sizeof(float)));
 
-    GPU_CHECK(cudaMalloc(&rpn_buffers_[0],  kRpnInputSize * sizeof(float)));
+    GPU_CHECK(cudaMalloc(&rpn_buffers_[0], kRpnInputSize * sizeof(float)));
 
-    GPU_CHECK(cudaMalloc(&rpn_buffers_[1],  kNumAnchorPerCls  * sizeof(float)));  //classes
-    GPU_CHECK(cudaMalloc(&rpn_buffers_[2],  kNumAnchorPerCls  * 2 * 2 * sizeof(float)));
-    GPU_CHECK(cudaMalloc(&rpn_buffers_[3],  kNumAnchorPerCls  * 2 * 2 * sizeof(float)));
-    GPU_CHECK(cudaMalloc(&rpn_buffers_[4],  kNumAnchorPerCls  * sizeof(float)));
-    GPU_CHECK(cudaMalloc(&rpn_buffers_[5],  kNumAnchorPerCls  * 2 * 2 * sizeof(float)));
-    GPU_CHECK(cudaMalloc(&rpn_buffers_[6],  kNumAnchorPerCls  * 2 * 2 * sizeof(float)));
-    
-    GPU_CHECK(cudaMalloc(&rpn_buffers_[7],  kNumAnchorPerCls * kNumClass * kNumOutputBoxFeature * sizeof(float))); //boxes
+    GPU_CHECK(cudaMalloc(&rpn_buffers_[1], kNumAnchorPerCls * sizeof(float))); // classes
+    GPU_CHECK(cudaMalloc(&rpn_buffers_[2], kNumAnchorPerCls * 2 * 2 * sizeof(float)));
+    GPU_CHECK(cudaMalloc(&rpn_buffers_[3], kNumAnchorPerCls * 2 * 2 * sizeof(float)));
+    GPU_CHECK(cudaMalloc(&rpn_buffers_[4], kNumAnchorPerCls * sizeof(float)));
+    GPU_CHECK(cudaMalloc(&rpn_buffers_[5], kNumAnchorPerCls * 2 * 2 * sizeof(float)));
+    GPU_CHECK(cudaMalloc(&rpn_buffers_[6], kNumAnchorPerCls * 2 * 2 * sizeof(float)));
+
+    GPU_CHECK(cudaMalloc(&rpn_buffers_[7], kNumAnchorPerCls * kNumClass * kNumOutputBoxFeature * sizeof(float))); // boxes
 
     // for scatter kernel
-    GPU_CHECK(cudaMalloc(reinterpret_cast<void**>(&dev_scattered_feature_),
-                        kNumThreads * kGridYSize * kGridXSize * sizeof(float)));
+    GPU_CHECK(cudaMalloc(reinterpret_cast<void **>(&dev_scattered_feature_),
+                         kNumThreads * kGridYSize * kGridXSize * sizeof(float)));
     // for filter
-    GPU_CHECK(cudaMalloc(reinterpret_cast<void**>(&dev_filtered_box_),
-                        kNumAnchor * kNumOutputBoxFeature * sizeof(float)));
-    GPU_CHECK(cudaMalloc(reinterpret_cast<void**>(&dev_filtered_score_),
-                        kNumAnchor * sizeof(float)));
-    GPU_CHECK(cudaMalloc(reinterpret_cast<void**>(&dev_filtered_label_),
-                        kNumAnchor * sizeof(int)));
-    GPU_CHECK(cudaMalloc(reinterpret_cast<void**>(&dev_filtered_dir_),
-                        kNumAnchor * sizeof(int)));
-    GPU_CHECK(cudaMalloc(reinterpret_cast<void**>(&dev_box_for_nms_),
-                        kNumAnchor * kNumBoxCorners * sizeof(float)));
-    GPU_CHECK(cudaMalloc(reinterpret_cast<void**>(&dev_filter_count_), kNumClass * sizeof(int)));
-
+    GPU_CHECK(cudaMalloc(reinterpret_cast<void **>(&dev_filtered_box_),
+                         kNumAnchor * kNumOutputBoxFeature * sizeof(float)));
+    GPU_CHECK(cudaMalloc(reinterpret_cast<void **>(&dev_filtered_score_),
+                         kNumAnchor * sizeof(float)));
+    GPU_CHECK(cudaMalloc(reinterpret_cast<void **>(&dev_filtered_label_),
+                         kNumAnchor * sizeof(int)));
+    GPU_CHECK(cudaMalloc(reinterpret_cast<void **>(&dev_filtered_dir_),
+                         kNumAnchor * sizeof(int)));
+    GPU_CHECK(cudaMalloc(reinterpret_cast<void **>(&dev_box_for_nms_),
+                         kNumAnchor * kNumBoxCorners * sizeof(float)));
+    GPU_CHECK(cudaMalloc(reinterpret_cast<void **>(&dev_filter_count_), kNumClass * sizeof(int)));
 }
 
-void PointPillars::SetDeviceMemoryToZero() {
+void PointPillars::SetDeviceMemoryToZero()
+{
 
     GPU_CHECK(cudaMemset(dev_num_points_per_pillar_, 0, kMaxNumPillars * sizeof(float)));
-    GPU_CHECK(cudaMemset(dev_x_coors_,               0, kMaxNumPillars * sizeof(int)));
-    GPU_CHECK(cudaMemset(dev_y_coors_,               0, kMaxNumPillars * sizeof(int)));
-    GPU_CHECK(cudaMemset(dev_pillar_point_feature_,  0, kMaxNumPillars * kMaxNumPointsPerPillar * kNumPointFeature * sizeof(float)));
-    GPU_CHECK(cudaMemset(dev_pillar_coors_,          0, kMaxNumPillars * 4 * sizeof(float)));
+    GPU_CHECK(cudaMemset(dev_x_coors_, 0, kMaxNumPillars * sizeof(int)));
+    GPU_CHECK(cudaMemset(dev_y_coors_, 0, kMaxNumPillars * sizeof(int)));
+    GPU_CHECK(cudaMemset(dev_pillar_point_feature_, 0, kMaxNumPillars * kMaxNumPointsPerPillar * kNumPointFeature * sizeof(float)));
+    GPU_CHECK(cudaMemset(dev_pillar_coors_, 0, kMaxNumPillars * 4 * sizeof(float)));
     // GPU_CHECK(cudaMemset(dev_sparse_pillar_map_,     0, kNumIndsForScan * kNumIndsForScan * sizeof(int)));
-    GPU_CHECK(cudaMemset(dev_pfe_gather_feature_,    0, kMaxNumPillars * kMaxNumPointsPerPillar * kNumGatherPointFeature * sizeof(float)));
-    
+    GPU_CHECK(cudaMemset(dev_pfe_gather_feature_, 0, kMaxNumPillars * kMaxNumPointsPerPillar * kNumGatherPointFeature * sizeof(float)));
+
     // GPU_CHECK(cudaMemset(pfe_buffers_[0],       0, kMaxNumPillars * kMaxNumPointsPerPillar * kNumGatherPointFeature * sizeof(float)));
     // GPU_CHECK(cudaMemset(pfe_buffers_[1],       0, kMaxNumPillars * 64 * sizeof(float)));
 
-    GPU_CHECK(cudaMemset(dev_scattered_feature_,    0, kNumThreads * kGridYSize * kGridXSize * sizeof(float)));
-    
+    GPU_CHECK(cudaMemset(dev_scattered_feature_, 0, kNumThreads * kGridYSize * kGridXSize * sizeof(float)));
+
     // GPU_CHECK(cudaMemset(rpn_buffers_[0],    0, kRpnInputSize * sizeof(float)));
     // GPU_CHECK(cudaMemset(rpn_buffers_[1],    0, kNumAnchorPerCls * kNumOutputBoxFeature * sizeof(float)));
     // GPU_CHECK(cudaMemset(rpn_buffers_[2],    0, kNumAnchorPerCls     * sizeof(float)));
@@ -279,147 +275,197 @@ void PointPillars::SetDeviceMemoryToZero() {
     // GPU_CHECK(cudaMemset(rpn_buffers_[9],    0, kNumAnchorPerCls * kNumOutputBoxFeature * sizeof(float)));
     // GPU_CHECK(cudaMemset(rpn_buffers_[10],   0, kNumAnchorPerCls     * sizeof(float)));
 
-    GPU_CHECK(cudaMemset(dev_filtered_box_,     0, kNumAnchor * kNumOutputBoxFeature * sizeof(float)));
-    GPU_CHECK(cudaMemset(dev_filtered_score_,   0, kNumAnchor * sizeof(float)));
-    GPU_CHECK(cudaMemset(dev_filter_count_,     0, kNumClass * sizeof(int)));
+    GPU_CHECK(cudaMemset(dev_filtered_box_, 0, kNumAnchor * kNumOutputBoxFeature * sizeof(float)));
+    GPU_CHECK(cudaMemset(dev_filtered_score_, 0, kNumAnchor * sizeof(float)));
+    GPU_CHECK(cudaMemset(dev_filter_count_, 0, kNumClass * sizeof(int)));
 }
 
-
-
-
-
-void PointPillars::InitTRT(const bool use_onnx) {
-    if (use_onnx_) {
+void PointPillars::InitTRT(const bool use_onnx)
+{
+    if (use_onnx_)
+    {
         // create a TensorRT model from the onnx model and load it into an engine
         OnnxToTRTModel(pfe_file_, &pfe_engine_);
         OnnxToTRTModel(backbone_file_, &backbone_engine_);
-    }else {
+    }
+    else
+    {
         EngineToTRTModel(pfe_file_, &pfe_engine_);
         EngineToTRTModel(backbone_file_, &backbone_engine_);
     }
-    if (pfe_engine_ == nullptr || backbone_engine_ == nullptr) {
+    if (pfe_engine_ == nullptr || backbone_engine_ == nullptr)
+    {
         std::cerr << "Failed to load ONNX file.";
     }
 
     // create execution context from the engine
     pfe_context_ = pfe_engine_->createExecutionContext();
     backbone_context_ = backbone_engine_->createExecutionContext();
-    if (pfe_context_ == nullptr || backbone_context_ == nullptr) {
+    if (pfe_context_ == nullptr || backbone_context_ == nullptr)
+    {
         std::cerr << "Failed to create TensorRT Execution Context.";
-    }else{
-        std::cout << "Successfully init the tensorRT model!"<<std::endl;
     }
-  
+    else
+    {
+        std::cout << "Successfully init the tensorRT model!" << std::endl;
+    }
 }
 
-void PointPillars::OnnxToTRTModel(
-    const std::string& model_file,  // name of the onnx model
-    nvinfer1::ICudaEngine** engine_ptr) {
-    int verbosity = static_cast<int>(nvinfer1::ILogger::Severity::kWARNING);
+// void PointPillars::OnnxToTRTModel(
+//     const std::string& model_file,  // name of the onnx model
+//     nvinfer1::ICudaEngine** engine_ptr) {
+//     int verbosity = static_cast<int>(nvinfer1::ILogger::Severity::kWARNING);
+
+//     // create the builder
+//     const auto explicit_batch =
+//         static_cast<uint32_t>(kBatchSize) << static_cast<uint32_t>(
+//             nvinfer1::NetworkDefinitionCreationFlag::kEXPLICIT_BATCH);
+//     nvinfer1::IBuilder* builder = nvinfer1::createInferBuilder(g_logger_);
+//     nvinfer1::INetworkDefinition* network =
+//         builder->createNetworkV2(explicit_batch);
+
+//     // parse onnx model
+//     auto parser = nvonnxparser::createParser(*network, g_logger_);
+//     if (!parser->parseFromFile(model_file.c_str(), verbosity)) {
+//         std::string msg("failed to parse onnx file");
+//         g_logger_.log(nvinfer1::ILogger::Severity::kERROR, msg.c_str());
+//         exit(EXIT_FAILURE);
+//     }
+
+//     // Build the engine
+//     builder->setMaxBatchSize(kBatchSize);
+//     builder->setHalf2Mode(true);
+//     nvinfer1::IBuilderConfig* config = builder->createBuilderConfig();
+//     config->setMaxWorkspaceSize(1 << 25);
+//     nvinfer1::ICudaEngine* engine =
+//         builder->buildEngineWithConfig(*network, *config);
+
+//     *engine_ptr = engine;
+//     parser->destroy();
+//     network->destroy();
+//     config->destroy();
+//     builder->destroy();
+// }
+
+void PointPillars::OnnxToTRTModel(const std::string &model_file,      // name of the onnx model
+                                  nvinfer1::ICudaEngine **engine_ptr) // output buffer for the TensorRT model
+{
+    int verbosity = (int)nvinfer1::ILogger::Severity::kWARNING;
 
     // create the builder
-    const auto explicit_batch =
-        static_cast<uint32_t>(kBatchSize) << static_cast<uint32_t>(
-            nvinfer1::NetworkDefinitionCreationFlag::kEXPLICIT_BATCH);
-    nvinfer1::IBuilder* builder = nvinfer1::createInferBuilder(g_logger_);
-    nvinfer1::INetworkDefinition* network =
-        builder->createNetworkV2(explicit_batch);
-
-    // parse onnx model
+    nvinfer1::IBuilder *builder = nvinfer1::createInferBuilder(g_logger_);
+    // 创建INetworkDefinition 对象
+    nvinfer1::INetworkDefinition *network = builder->createNetworkV2(1U << static_cast<uint32_t>(nvinfer1::NetworkDefinitionCreationFlag::kEXPLICIT_BATCH));
+    // 创建解析器
     auto parser = nvonnxparser::createParser(*network, g_logger_);
-    if (!parser->parseFromFile(model_file.c_str(), verbosity)) {
+
+    // 解析onnx文件，并填充网络
+    if (!parser->parseFromFile(model_file.c_str(), verbosity))
+    {
         std::string msg("failed to parse onnx file");
         g_logger_.log(nvinfer1::ILogger::Severity::kERROR, msg.c_str());
         exit(EXIT_FAILURE);
     }
 
     // Build the engine
-    builder->setMaxBatchSize(kBatchSize);
-    builder->setHalf2Mode(true);
-    nvinfer1::IBuilderConfig* config = builder->createBuilderConfig();
-    config->setMaxWorkspaceSize(1 << 25);
-    nvinfer1::ICudaEngine* engine =
-        builder->buildEngineWithConfig(*network, *config);
+    builder->setMaxBatchSize(1);
+    // 创建iBuilderConfig对象
+    nvinfer1::IBuilderConfig *iBuilderConfig = builder->createBuilderConfig();
+    // 设置engine可使用的最大GPU临时值
+    iBuilderConfig->setMaxWorkspaceSize(1 << 20);
 
+    nvinfer1::ICudaEngine *engine = builder->buildEngineWithConfig(*network, *iBuilderConfig);
     *engine_ptr = engine;
+
+    // 将engine序列化，保存到文件中
+    // trt_model_stream = engine->serialize();
+    // // save engine
+    // std::ofstream p("model.trt", std::ios::binary);
+    // if (!p)
+    // {
+    //     std::cerr << "could not open plan output file" << std::endl;
+    // }
+    // p.write(reinterpret_cast<const char *>(trt_model_stream->data()), trt_model_stream->size());
     parser->destroy();
+    engine->destroy();
     network->destroy();
-    config->destroy();
     builder->destroy();
+    iBuilderConfig->destroy();
 }
 
-
 void PointPillars::EngineToTRTModel(
-    const std::string &engine_file ,     
-    nvinfer1::ICudaEngine** engine_ptr)  {
+    const std::string &engine_file,
+    nvinfer1::ICudaEngine **engine_ptr)
+{
     int verbosity = static_cast<int>(nvinfer1::ILogger::Severity::kWARNING);
-    std::stringstream gieModelStream; 
-    gieModelStream.seekg(0, gieModelStream.beg); 
+    std::stringstream gieModelStream;
+    gieModelStream.seekg(0, gieModelStream.beg);
 
-    std::ifstream cache(engine_file); 
+    std::ifstream cache(engine_file);
     gieModelStream << cache.rdbuf();
-    cache.close(); 
-    nvinfer1::IRuntime* runtime = nvinfer1::createInferRuntime(g_logger_); 
+    cache.close();
+    nvinfer1::IRuntime *runtime = nvinfer1::createInferRuntime(g_logger_);
 
-    if (runtime == nullptr) {
+    if (runtime == nullptr)
+    {
         std::string msg("failed to build runtime parser");
         g_logger_.log(nvinfer1::ILogger::Severity::kERROR, msg.c_str());
         exit(EXIT_FAILURE);
     }
     gieModelStream.seekg(0, std::ios::end);
-    const int modelSize = gieModelStream.tellg(); 
+    const int modelSize = gieModelStream.tellg();
 
     gieModelStream.seekg(0, std::ios::beg);
-    void* modelMem = malloc(modelSize); 
-    gieModelStream.read((char*)modelMem, modelSize);
+    void *modelMem = malloc(modelSize);
+    gieModelStream.read((char *)modelMem, modelSize);
 
-    std::cout << "                                                                  "<< std::endl;
-    std::cout << "------------------------------------------------------------------"<< std::endl;
-    std::cout << ">>>>                                                          >>>>"<< std::endl;
-    std::cout << "                                                                  "<< std::endl;
+    std::cout << "                                                                  " << std::endl;
+    std::cout << "------------------------------------------------------------------" << std::endl;
+    std::cout << ">>>>                                                          >>>>" << std::endl;
+    std::cout << "                                                                  " << std::endl;
     std::cout << "Input filename:   " << engine_file << std::endl;
-    std::cout << "                                                                  "<< std::endl;
-    std::cout << ">>>>                                                          >>>>"<< std::endl;
-    std::cout << "------------------------------------------------------------------"<< std::endl;
-    std::cout << "                                                                  "<< std::endl;
+    std::cout << "                                                                  " << std::endl;
+    std::cout << ">>>>                                                          >>>>" << std::endl;
+    std::cout << "------------------------------------------------------------------" << std::endl;
+    std::cout << "                                                                  " << std::endl;
 
-    nvinfer1::ICudaEngine* engine = runtime->deserializeCudaEngine(modelMem, modelSize, NULL); 
-    if (engine == nullptr) {
+    nvinfer1::ICudaEngine *engine = runtime->deserializeCudaEngine(modelMem, modelSize, NULL);
+    if (engine == nullptr)
+    {
         std::string msg("failed to build engine parser");
         g_logger_.log(nvinfer1::ILogger::Severity::kERROR, msg.c_str());
         exit(EXIT_FAILURE);
     }
     *engine_ptr = engine;
-
 }
 
-void PointPillars::DoInference(const float* in_points_array,
-                                const int in_num_points,
-                                std::vector<float>* out_detections,
-                                std::vector<int>* out_labels,
-                                std::vector<float>* out_scores) 
+void PointPillars::DoInference(const float *in_points_array,
+                               const int in_num_points,
+                               std::vector<float> *out_detections,
+                               std::vector<int> *out_labels,
+                               std::vector<float> *out_scores)
 {
     SetDeviceMemoryToZero();
     cudaDeviceSynchronize();
     // [STEP 1] : load pointcloud
-    float* dev_points;
-    GPU_CHECK(cudaMalloc(reinterpret_cast<void**>(&dev_points),
-                        in_num_points * kNumPointFeature * sizeof(float))); // in_num_points , 5
+    float *dev_points;
+    GPU_CHECK(cudaMalloc(reinterpret_cast<void **>(&dev_points),
+                         in_num_points * kNumPointFeature * sizeof(float))); // in_num_points , 5
     GPU_CHECK(cudaMemset(dev_points, 0, in_num_points * kNumPointFeature * sizeof(float)));
     GPU_CHECK(cudaMemcpy(dev_points, in_points_array,
-                        in_num_points * kNumPointFeature * sizeof(float),
-                        cudaMemcpyHostToDevice));
+                         in_num_points * kNumPointFeature * sizeof(float),
+                         cudaMemcpyHostToDevice));
 
-    std::cout<<"2"<<std::endl;
-    
+    std::cout << "2" << std::endl;
+
     // [STEP 2] : preprocess
     host_pillar_count_[0] = 0;
     auto preprocess_start = std::chrono::high_resolution_clock::now();
     preprocess_points_cuda_ptr_->DoPreprocessPointsCuda(
-          dev_points, in_num_points, dev_x_coors_, dev_y_coors_,
-          dev_num_points_per_pillar_, dev_pillar_point_feature_, dev_pillar_coors_,
-          dev_sparse_pillar_map_, host_pillar_count_ ,
-          dev_pfe_gather_feature_ );
+        dev_points, in_num_points, dev_x_coors_, dev_y_coors_,
+        dev_num_points_per_pillar_, dev_pillar_point_feature_, dev_pillar_coors_,
+        dev_sparse_pillar_map_, host_pillar_count_,
+        dev_pfe_gather_feature_);
     cudaDeviceSynchronize();
     auto preprocess_end = std::chrono::high_resolution_clock::now();
     // DEVICE_SAVE<float>(dev_pfe_gather_feature_,  kMaxNumPillars * kMaxNumPointsPerPillar * kNumGatherPointFeature  , "0_Model_pfe_input_gather_feature");
@@ -428,8 +474,8 @@ void PointPillars::DoInference(const float* in_points_array,
     GPU_CHECK(cudaStreamCreate(&stream));
     auto pfe_start = std::chrono::high_resolution_clock::now();
     GPU_CHECK(cudaMemcpyAsync(pfe_buffers_[0], dev_pfe_gather_feature_,
-                            kMaxNumPillars * kMaxNumPointsPerPillar * kNumGatherPointFeature * sizeof(float), ///kNumGatherPointFeature
-                            cudaMemcpyDeviceToDevice, stream));
+                              kMaxNumPillars * kMaxNumPointsPerPillar * kNumGatherPointFeature * sizeof(float), /// kNumGatherPointFeature
+                              cudaMemcpyDeviceToDevice, stream));
     pfe_context_->enqueueV2(pfe_buffers_, stream, nullptr);
     cudaDeviceSynchronize();
     auto pfe_end = std::chrono::high_resolution_clock::now();
@@ -439,16 +485,16 @@ void PointPillars::DoInference(const float* in_points_array,
     auto scatter_start = std::chrono::high_resolution_clock::now();
     scatter_cuda_ptr_->DoScatterCuda(
         host_pillar_count_[0], dev_x_coors_, dev_y_coors_,
-        reinterpret_cast<float*>(pfe_buffers_[1]), dev_scattered_feature_);
+        reinterpret_cast<float *>(pfe_buffers_[1]), dev_scattered_feature_);
     cudaDeviceSynchronize();
-    auto scatter_end = std::chrono::high_resolution_clock::now();   
+    auto scatter_end = std::chrono::high_resolution_clock::now();
     // DEVICE_SAVE<float>(dev_scattered_feature_ ,  kRpnInputSize,"2_Model_backbone_input_dev_scattered_feature");
 
     // [STEP 5] : backbone forward
     auto backbone_start = std::chrono::high_resolution_clock::now();
     GPU_CHECK(cudaMemcpyAsync(rpn_buffers_[0], dev_scattered_feature_,
-                            kBatchSize * kRpnInputSize * sizeof(float),
-                            cudaMemcpyDeviceToDevice, stream));
+                              kBatchSize * kRpnInputSize * sizeof(float),
+                              cudaMemcpyDeviceToDevice, stream));
     backbone_context_->enqueueV2(rpn_buffers_, stream, nullptr);
     cudaDeviceSynchronize();
     auto backbone_end = std::chrono::high_resolution_clock::now();
@@ -464,15 +510,15 @@ void PointPillars::DoInference(const float* in_points_array,
     auto postprocess_start = std::chrono::high_resolution_clock::now();
     GPU_CHECK(cudaMemset(dev_filter_count_, 0, kNumClass * sizeof(int)));
     postprocess_cuda_ptr_->DoPostprocessCuda(
-        reinterpret_cast<float*>(rpn_buffers_[1]), // [cls]   kNumAnchorPerCls 
-        reinterpret_cast<float*>(rpn_buffers_[2]), // [cls]   kNumAnchorPerCls * 2 * 2
-        reinterpret_cast<float*>(rpn_buffers_[3]), // [cls]   kNumAnchorPerCls * 2 * 2
-        reinterpret_cast<float*>(rpn_buffers_[4]), // [cls]   kNumAnchorPerCls 
-        reinterpret_cast<float*>(rpn_buffers_[5]), // [cls]   kNumAnchorPerCls * 2 * 2
-        reinterpret_cast<float*>(rpn_buffers_[6]), // [cls]   kNumAnchorPerCls * 2 * 2
-        reinterpret_cast<float*>(rpn_buffers_[7]), // [boxes] kNumAnchorPerCls * kNumClass * kNumOutputBoxFeature
+        reinterpret_cast<float *>(rpn_buffers_[1]), // [cls]   kNumAnchorPerCls
+        reinterpret_cast<float *>(rpn_buffers_[2]), // [cls]   kNumAnchorPerCls * 2 * 2
+        reinterpret_cast<float *>(rpn_buffers_[3]), // [cls]   kNumAnchorPerCls * 2 * 2
+        reinterpret_cast<float *>(rpn_buffers_[4]), // [cls]   kNumAnchorPerCls
+        reinterpret_cast<float *>(rpn_buffers_[5]), // [cls]   kNumAnchorPerCls * 2 * 2
+        reinterpret_cast<float *>(rpn_buffers_[6]), // [cls]   kNumAnchorPerCls * 2 * 2
+        reinterpret_cast<float *>(rpn_buffers_[7]), // [boxes] kNumAnchorPerCls * kNumClass * kNumOutputBoxFeature
         dev_filtered_box_, dev_filtered_score_, dev_filter_count_,
-        *out_detections, *out_labels , *out_scores);
+        *out_detections, *out_labels, *out_scores);
     cudaDeviceSynchronize();
     auto postprocess_end = std::chrono::high_resolution_clock::now();
 
@@ -485,15 +531,15 @@ void PointPillars::DoInference(const float* in_points_array,
 
     std::chrono::duration<double> pointpillars_cost = postprocess_end - preprocess_start;
     std::cout << "------------------------------------" << std::endl;
-    std::cout << setiosflags(ios::left)  << setw(14) << "Module" << setw(12)  << "Time"  << resetiosflags(ios::left) << std::endl;
+    std::cout << setiosflags(ios::left) << setw(14) << "Module" << setw(12) << "Time" << resetiosflags(ios::left) << std::endl;
     std::cout << "------------------------------------" << std::endl;
-    std::string Modules[] = {"Preprocess" , "Pfe" , "Scatter" , "Backbone" , "Postprocess" , "Summary"};
-    double Times[] = {preprocess_cost.count() , pfe_cost.count() , scatter_cost.count() , backbone_cost.count() , postprocess_cost.count() , pointpillars_cost.count()}; 
+    std::string Modules[] = {"Preprocess", "Pfe", "Scatter", "Backbone", "Postprocess", "Summary"};
+    double Times[] = {preprocess_cost.count(), pfe_cost.count(), scatter_cost.count(), backbone_cost.count(), postprocess_cost.count(), pointpillars_cost.count()};
 
-    for (int i =0 ; i < 6 ; ++i) {
-        std::cout << setiosflags(ios::left) << setw(14) << Modules[i]  << setw(8)  << Times[i] * 1000 << " ms" << resetiosflags(ios::left) << std::endl;
+    for (int i = 0; i < 6; ++i)
+    {
+        std::cout << setiosflags(ios::left) << setw(14) << Modules[i] << setw(8) << Times[i] * 1000 << " ms" << resetiosflags(ios::left) << std::endl;
     }
     std::cout << "------------------------------------" << std::endl;
     cudaStreamDestroy(stream);
-
 }

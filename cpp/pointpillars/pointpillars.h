@@ -71,16 +71,22 @@
 using namespace std;
 
 // Logger for TensorRT info/warning/errors
-class Logger : public nvinfer1::ILogger {
- public:
-  explicit Logger(Severity severity = Severity::kWARNING)
-      : reportable_severity(severity) {}
+class Logger : public nvinfer1::ILogger
+{
+public:
+  Logger(Severity severity = Severity::kWARNING) : reportableSeverity(severity)
+  {
+  }
 
-  void log(Severity severity, const char* msg) override {
+  void log(Severity severity, char const* msg) noexcept
+  // void log(Severity severity, const char* msg) noexcept
+  {
     // suppress messages with severity enum value greater than the reportable
-    if (severity > reportable_severity) return;
+    if (severity > reportableSeverity)
+      return;
 
-    switch (severity) {
+    switch (severity)
+    {
       case Severity::kINTERNAL_ERROR:
         std::cerr << "INTERNAL_ERROR: ";
         break;
@@ -100,8 +106,42 @@ class Logger : public nvinfer1::ILogger {
     std::cerr << msg << std::endl;
   }
 
-  Severity reportable_severity;
+  Severity reportableSeverity;
 };
+
+
+// Logger for TensorRT info/warning/errors
+// class Logger : public nvinfer1::ILogger {
+//  public:
+//   explicit Logger(Severity severity = Severity::kWARNING)
+//       : reportable_severity(severity) {}
+
+//   void log(Severity severity, const char* msg) override {
+//     // suppress messages with severity enum value greater than the reportable
+//     if (severity > reportable_severity) return;
+
+//     switch (severity) {
+//       case Severity::kINTERNAL_ERROR:
+//         std::cerr << "INTERNAL_ERROR: ";
+//         break;
+//       case Severity::kERROR:
+//         std::cerr << "ERROR: ";
+//         break;
+//       case Severity::kWARNING:
+//         std::cerr << "WARNING: ";
+//         break;
+//       case Severity::kINFO:
+//         std::cerr << "INFO: ";
+//         break;
+//       default:
+//         std::cerr << "UNKNOWN: ";
+//         break;
+//     }
+//     std::cerr << msg << std::endl;
+//   }
+
+//   Severity reportable_severity;
+// };
 
 
 

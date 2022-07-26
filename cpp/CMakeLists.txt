@@ -16,9 +16,6 @@ if (NOT CMAKE_BUILD_TYPE)
     set(CMAKE_BUILD_TYPE Release)
 endif ()
 
-############################################################
-# add 3th_part library
-############################################################
 
 find_package(yaml-cpp REQUIRED)
 include_directories(${YAML_CPP_INCLUDE_DIRS})
@@ -39,9 +36,17 @@ endif ()
 # find_library(NVPARSERS NAMES nvparsers)
 # find_library(NVONNXPARSERS NAMES nvonnxparser)
 
-find_library(NVINFER NAMES nvinfer PATHS $ENV{HOME}/TensorRT-7.0.0.11/ PATH_SUFFIXES lib)
-find_library(NVPARSERS NAMES nvparsers PATHS $ENV{HOME}/TensorRT-7.0.0.11/ PATH_SUFFIXES lib)
-find_library(NVONNXPARSERS NAMES nvonnxparser PATHS $ENV{HOME}/TensorRT-7.0.0.11/ PATH_SUFFIXES lib)
+SET(TENSORRT_PATH /home/xiaohu/3D/TensorRT-8.4.0.6/)
+SET(TENSORRT_LIB_PATH /home/xiaohu/3D/TensorRT-8.4.0.6/lib)
+
+include_directories(
+   ${TENSORRT_PATH}/include
+)
+
+message("ENV{TENSORRT_PATH} :" $ENV{TENSORRT_PATH})
+find_library(NVINFER NAMES nvinfer PATHS $ENV{TENSORRT_PATH}/ PATH_SUFFIXES lib)
+find_library(NVPARSERS NAMES nvparsers PATHS $ENV{TENSORRT_PATH}/ PATH_SUFFIXES lib)
+find_library(NVONNXPARSERS NAMES nvonnxparser PATHS $ENV{TENSORRT_PATH}/ PATH_SUFFIXES lib)
 
 list(APPEND LINK_LIBRARY
             ${CUDA_cusparse_LIBRARY}

@@ -298,41 +298,88 @@ void PointPillarsSingle::InitTRT(const bool use_onnx) {
   
 }
 
-void PointPillarsSingle::OnnxToTRTModel(
-    const std::string& model_file,  // name of the onnx model
-    nvinfer1::ICudaEngine** engine_ptr) {
-    int verbosity = static_cast<int>(nvinfer1::ILogger::Severity::kWARNING);
+// void PointPillarsSingle::OnnxToTRTModel(
+//     const std::string& model_file,  // name of the onnx model
+//     nvinfer1::ICudaEngine** engine_ptr) {
+//     int verbosity = static_cast<int>(nvinfer1::ILogger::Severity::kWARNING);
+
+//     // create the builder
+//     const auto explicit_batch =
+//         static_cast<uint32_t>(kBatchSize) << static_cast<uint32_t>(
+//             nvinfer1::NetworkDefinitionCreationFlag::kEXPLICIT_BATCH);
+//     nvinfer1::IBuilder* builder = nvinfer1::createInferBuilder(g_logger_);
+//     nvinfer1::INetworkDefinition* network =
+//         builder->createNetworkV2(explicit_batch);
+
+//     // parse onnx model
+//     auto parser = nvonnxparser::createParser(*network, g_logger_);
+//     if (!parser->parseFromFile(model_file.c_str(), verbosity)) {
+//         std::string msg("failed to parse onnx file");
+//         g_logger_.log(nvinfer1::ILogger::Severity::kERROR, msg.c_str());
+//         exit(EXIT_FAILURE);
+//     }
+
+//     // Build the engine
+//     builder->setMaxBatchSize(kBatchSize);
+//     builder->setHalf2Mode(true);
+//     nvinfer1::IBuilderConfig* config = builder->createBuilderConfig();
+//     config->setMaxWorkspaceSize(1 << 25);
+//     nvinfer1::ICudaEngine* engine =
+//         builder->buildEngineWithConfig(*network, *config);
+
+//     *engine_ptr = engine;
+//     parser->destroy();
+//     network->destroy();
+//     config->destroy();
+//     builder->destroy();
+// }
+
+void PointPillarsSingle::OnnxToTRTModel(const std::string &model_file,      // name of the onnx model
+                                  nvinfer1::ICudaEngine **engine_ptr) // output buffer for the TensorRT model
+{
+    int verbosity = (int)nvinfer1::ILogger::Severity::kWARNING;
 
     // create the builder
-    const auto explicit_batch =
-        static_cast<uint32_t>(kBatchSize) << static_cast<uint32_t>(
-            nvinfer1::NetworkDefinitionCreationFlag::kEXPLICIT_BATCH);
-    nvinfer1::IBuilder* builder = nvinfer1::createInferBuilder(g_logger_);
-    nvinfer1::INetworkDefinition* network =
-        builder->createNetworkV2(explicit_batch);
-
-    // parse onnx model
+    nvinfer1::IBuilder *builder = nvinfer1::createInferBuilder(g_logger_);
+    // 创建INetworkDefinition 对象
+    nvinfer1::INetworkDefinition *network = builder->createNetworkV2(1U << static_cast<uint32_t>(nvinfer1::NetworkDefinitionCreationFlag::kEXPLICIT_BATCH));
+    // 创建解析器
     auto parser = nvonnxparser::createParser(*network, g_logger_);
-    if (!parser->parseFromFile(model_file.c_str(), verbosity)) {
+
+    // 解析onnx文件，并填充网络
+    if (!parser->parseFromFile(model_file.c_str(), verbosity))
+    {
         std::string msg("failed to parse onnx file");
         g_logger_.log(nvinfer1::ILogger::Severity::kERROR, msg.c_str());
         exit(EXIT_FAILURE);
     }
 
     // Build the engine
-    builder->setMaxBatchSize(kBatchSize);
-    builder->setHalf2Mode(true);
-    nvinfer1::IBuilderConfig* config = builder->createBuilderConfig();
-    config->setMaxWorkspaceSize(1 << 25);
-    nvinfer1::ICudaEngine* engine =
-        builder->buildEngineWithConfig(*network, *config);
+    builder->setMaxBatchSize(1);
+    // 创建iBuilderConfig对象
+    nvinfer1::IBuilderConfig *iBuilderConfig = builder->createBuilderConfig();
+    // 设置engine可使用的最大GPU临时值
+    iBuilderConfig->setMaxWorkspaceSize(1 << 20);
 
+    nvinfer1::ICudaEngine *engine = builder->buildEngineWithConfig(*network, *iBuilderConfig);
     *engine_ptr = engine;
+
+    // 将engine序列化，保存到文件中
+    // trt_model_stream = engine->serialize();
+    // // save engine
+    // std::ofstream p("model.trt", std::ios::binary);
+    // if (!p)
+    // {
+    //     std::cerr << "could not open plan output file" << std::endl;
+    // }
+    // p.write(reinterpret_cast<const char *>(trt_model_stream->data()), trt_model_stream->size());
     parser->destroy();
+    engine->destroy();
     network->destroy();
-    config->destroy();
     builder->destroy();
+    iBuilderConfig->destroy();
 }
+
 
 
 void PointPillarsSingle::EngineToTRTModel(
